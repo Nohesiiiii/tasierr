@@ -363,7 +363,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════
-def main():
+async def main():
     print("╔══════════════════════════════════════════════╗")
     print("║  TARSIERS TELEGRAM REG BOT                  ║")
     print("║  Deployed on Render                         ║")
@@ -380,12 +380,18 @@ def main():
     app.add_handler(CommandHandler("reg", button_callback))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Start bot (non-async version)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Start bot with polling
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Keep running
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\n[!] Stopped")
     except Exception as e:
