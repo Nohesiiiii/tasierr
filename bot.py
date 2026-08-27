@@ -7,6 +7,7 @@ import sys
 import re
 import os
 import base64
+from datetime import datetime, timezone, timedelta
 from fake_useragent import UserAgent
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -70,6 +71,11 @@ ua = UserAgent()
 # ════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════
+def get_ph_time():
+    """Get Philippine time (UTC+8)"""
+    ph_tz = timezone(timedelta(hours=8))
+    return datetime.now(ph_tz).strftime("%I:%M %p")
+
 def generate_ph_mobile():
     prefixes = ["908","909","917","918","919","920","921","922","926","927","928","929","930","931","932","933","934","935","936","937","938","939","940","941","942","943","944","945","946","947","948","949","950","951","952","953","954","955","956","957","958","959","960","961","962","963","964","965","966","967","968","969","970","971","972","973","974","975","976","977","978","979","980","981","982","983","984","985","986","987","988","989","990","991","992","993","994","995","996","997","998","999"]
     return random.choice(prefixes) + str(random.randint(1000000, 9999999))
@@ -206,6 +212,7 @@ async def create_recharge_order(proxy_cfg, token):
             return {"success": False, "error": str(e)}
 
 async def get_qr_from_sspay(qr_url, proxy_cfg):
+    """Get QR code image from SSPAY website - FIXED"""
     proxy_url = None
     if proxy_cfg and proxy_cfg.get("host"):
         p = proxy_cfg
@@ -234,13 +241,35 @@ async def get_qr_from_sspay(qr_url, proxy_cfg):
             async with session.get(qr_url, headers=headers, proxy=proxy_url, allow_redirects=True, timeout=30) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    qr_match = re.search(r'<img[^>]+src="(data:image/png;base64,[^"]+)"', html)
-                    if qr_match:
-                        qr_data = qr_match.group(1)
-                        if qr_data.startswith('data:image/png;base64,'):
-                            return qr_data.replace('data:image/png;base64,', '')
                     
-                    # Use QR server as fallback
+                    # Try multiple patterns to find QR code
+                    patterns = [
+                        r'<img[^>]+src="(data:image/png;base64,[^"]+)"',
+                        r'<img[^>]+src="([^"]+qr[^"]+\.png[^"]*)"',
+                        r'<img[^>]+src="([^"]+qrcode[^"]+)"',
+                        r'<img[^>]+src="([^"]+\.png[^"]*)"',
+                        r'qrCode\s*[:=]\s*["\']([^"\']+)["\']',
+                        r'qr_code\s*[:=]\s*["\']([^"\']+)["\']',
+                        r'<canvas[^>]+id="[^"]*qr[^"]*"[^>]*>',
+                    ]
+                    
+                    for pattern in patterns:
+                        match = re.search(pattern, html, re.IGNORECASE)
+                        if match:
+                            qr_data = match.group(1)
+                            if qr_data.startswith('data:image/png;base64,'):
+                                return qr_data.replace('data:image/png;base64,', '')
+                            elif qr_data.startswith('http'):
+                                # Download the QR image
+                                async with session.get(qr_data, proxy=proxy_url, timeout=30) as img_resp:
+                                    if img_resp.status == 200:
+                                        img_data = await img_resp.read()
+                                        return base64.b64encode(img_data).decode('utf-8')
+                            else:
+                                # Try to use as-is
+                                return qr_data
+                    
+                    # Last resort: Generate QR from URL using QR server
                     qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_url}"
                     async with session.get(qr_api_url, proxy=proxy_url, timeout=30) as qr_resp:
                         if qr_resp.status == 200:
@@ -263,12 +292,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"🤖 Tarsiers.bet Registration Bot\n\n"
+        f"🤖 *Tarsiers.bet Registration Bot*\n\n"
         f"Click the button below to register a new account!\n\n"
-        f"📱 Auto Recharge: ₱{RECHARGE_AMOUNT}\n"
-        f"🏦 Payment: {RECHARGE_TYPE}\n"
-        f"🔄 Each registration uses different IP",
-        reply_markup=reply_markup
+        f"📱 *Auto Recharge:* ₱{RECHARGE_AMOUNT}\n"
+        f"🏦 *Payment:* {RECHARGE_TYPE}\n"
+        f"🔄 *Each registration uses different IP*\n\n"
+        f"🇵🇭 *Time:* {get_ph_time()} (PH Time)",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -276,30 +307,43 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == 'register':
-        await query.edit_message_text("🔄 Processing registration...\nPlease wait...")
+        ph_time = get_ph_time()
+        await query.edit_message_text(
+            f"🔄 *Processing Registration...*\n"
+            f"⏰ {ph_time} (PH Time)\n\n"
+            f"Please wait...",
+            parse_mode='Markdown'
+        )
         
         proxy = get_next_proxy()
+        proxy_info = f"{proxy['host']}:{proxy['port']}" if proxy else "No proxy"
         
+        # Step 1: Register
         reg_result = await register_tarsiers(proxy)
         
         if not reg_result["success"]:
             await query.edit_message_text(
-                f"❌ Registration Failed!\n\n"
+                f"❌ *Registration Failed!*\n\n"
+                f"⏰ {ph_time} (PH Time)\n"
                 f"Error: {reg_result.get('error', 'Unknown error')}\n\n"
-                f"Please try again."
+                f"Please try again.",
+                parse_mode='Markdown'
             )
             return
         
         phone = reg_result["phone"]
         token = reg_result["token"]
         
+        # Step 2: Create recharge
         order_result = await create_recharge_order(proxy, token)
         
         if not order_result["success"]:
             await query.edit_message_text(
-                f"✅ Registered: {phone}\n"
-                f"❌ Recharge Failed!\n\n"
-                f"Error: {order_result.get('error', 'Unknown error')}"
+                f"✅ *Registered:* {phone}\n"
+                f"❌ *Recharge Failed!*\n\n"
+                f"⏰ {ph_time} (PH Time)\n"
+                f"Error: {order_result.get('error', 'Unknown error')}",
+                parse_mode='Markdown'
             )
             return
         
@@ -308,24 +352,32 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount = order_result.get("amount", RECHARGE_AMOUNT)
         
         await query.edit_message_text(
-            f"✅ Registered: {phone}\n"
-            f"✅ Recharge Created!\n"
-            f"💰 Amount: ₱{amount}\n"
-            f"🆔 Order: {order_no}\n\n"
-            f"📱 Fetching QR Code..."
+            f"✅ *Registered:* {phone}\n"
+            f"✅ *Recharge Created!*\n"
+            f"💰 *Amount:* ₱{amount}\n"
+            f"🆔 *Order:* {order_no}\n"
+            f"🌐 *Proxy:* {proxy_info}\n"
+            f"⏰ *Time:* {ph_time} (PH Time)\n\n"
+            f"📱 *Fetching QR Code...*",
+            parse_mode='Markdown'
         )
         
+        # Step 3: Get QR image from SSPAY
         qr_base64 = await get_qr_from_sspay(cashier, proxy)
         
         if qr_base64:
+            # Send QR image
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=base64.b64decode(qr_base64),
-                caption=f"💵 Pay ₱{amount} via {RECHARGE_TYPE}\n\n"
-                        f"📱 Phone: {phone}\n"
-                        f"🆔 Order: {order_no}"
+                caption=f"💵 *Pay ₱{amount} via {RECHARGE_TYPE}*\n\n"
+                        f"📱 *Phone:* `{phone}`\n"
+                        f"🆔 *Order:* `{order_no}`\n"
+                        f"⏰ *Time:* {ph_time} (PH Time)",
+                parse_mode='Markdown'
             )
             
+            # Add buttons
             keyboard = [
                 [InlineKeyboardButton("🔄 Register Another", callback_data='register')],
                 [InlineKeyboardButton("📱 Open Payment Link", url=cashier)]
@@ -334,30 +386,131 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="✅ Done! Scan the QR code above or click the link below.",
-                reply_markup=reply_markup
+                text="✅ *Done!* Scan the QR code above or click the link below.",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
             )
         else:
+            # Send URL if QR generation fails
             keyboard = [[InlineKeyboardButton("📱 Open Payment Link", url=cashier)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.edit_message_text(
-                f"✅ Registration Complete!\n\n"
-                f"📱 Phone: {phone}\n"
-                f"💰 Amount: ₱{amount}\n"
-                f"🆔 Order: {order_no}\n\n"
+                f"✅ *Registration Complete!*\n\n"
+                f"📱 *Phone:* `{phone}`\n"
+                f"💰 *Amount:* ₱{amount}\n"
+                f"🆔 *Order:* `{order_no}`\n"
+                f"⏰ *Time:* {ph_time} (PH Time)\n\n"
                 f"Click the button below to open payment page.",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
             )
     
     elif query.data == 'help':
+        ph_time = get_ph_time()
         await query.edit_message_text(
-            f"📖 Help Guide\n\n"
-            f"🔐 Register: Creates a new account and auto-recharge ₱{RECHARGE_AMOUNT}\n"
-            f"📱 QR Code: Will be sent as image after registration\n"
-            f"💰 Payment: Scan QR with {RECHARGE_TYPE}\n"
-            f"🔄 Each registration uses different IP/proxy\n\n"
-            f"⚠️ Make sure to complete payment within 10 minutes."
+            f"📖 *Help Guide*\n\n"
+            f"🔐 *Register:* Creates a new account and auto-recharge ₱{RECHARGE_AMOUNT}\n"
+            f"📱 *QR Code:* Will be sent as image after registration\n"
+            f"💰 *Payment:* Scan QR with {RECHARGE_TYPE}\n"
+            f"🔄 *Each registration uses different IP/proxy*\n"
+            f"⏰ *Current Time:* {ph_time} (PH Time)\n\n"
+            f"⚠️ Make sure to complete payment within 10 minutes.\n\n"
+            f"Click /start to go back.",
+            parse_mode='Markdown'
+        )
+
+async def reg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /reg command"""
+    ph_time = get_ph_time()
+    await update.message.reply_text(
+        f"🔄 *Processing Registration...*\n"
+        f"⏰ {ph_time} (PH Time)\n\n"
+        f"Please wait...",
+        parse_mode='Markdown'
+    )
+    
+    proxy = get_next_proxy()
+    proxy_info = f"{proxy['host']}:{proxy['port']}" if proxy else "No proxy"
+    
+    reg_result = await register_tarsiers(proxy)
+    
+    if not reg_result["success"]:
+        await update.message.reply_text(
+            f"❌ *Registration Failed!*\n\n"
+            f"⏰ {ph_time} (PH Time)\n"
+            f"Error: {reg_result.get('error', 'Unknown error')}",
+            parse_mode='Markdown'
+        )
+        return
+    
+    phone = reg_result["phone"]
+    token = reg_result["token"]
+    
+    order_result = await create_recharge_order(proxy, token)
+    
+    if not order_result["success"]:
+        await update.message.reply_text(
+            f"✅ *Registered:* {phone}\n"
+            f"❌ *Recharge Failed!*\n\n"
+            f"⏰ {ph_time} (PH Time)",
+            parse_mode='Markdown'
+        )
+        return
+    
+    order_no = order_result.get("order_no")
+    cashier = order_result.get("cashier")
+    amount = order_result.get("amount", RECHARGE_AMOUNT)
+    
+    await update.message.reply_text(
+        f"✅ *Registered:* {phone}\n"
+        f"✅ *Recharge Created!*\n"
+        f"💰 *Amount:* ₱{amount}\n"
+        f"🆔 *Order:* {order_no}\n"
+        f"🌐 *Proxy:* {proxy_info}\n"
+        f"⏰ *Time:* {ph_time} (PH Time)\n\n"
+        f"📱 *Fetching QR Code...*",
+        parse_mode='Markdown'
+    )
+    
+    qr_base64 = await get_qr_from_sspay(cashier, proxy)
+    
+    if qr_base64:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=base64.b64decode(qr_base64),
+            caption=f"💵 *Pay ₱{amount} via {RECHARGE_TYPE}*\n\n"
+                    f"📱 *Phone:* `{phone}`\n"
+                    f"🆔 *Order:* `{order_no}`\n"
+                    f"⏰ *Time:* {ph_time} (PH Time)",
+            parse_mode='Markdown'
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Register Another", callback_data='register')],
+            [InlineKeyboardButton("📱 Open Payment Link", url=cashier)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✅ *Done!* Scan the QR code above or click the link below.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        keyboard = [[InlineKeyboardButton("📱 Open Payment Link", url=cashier)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            f"✅ *Registration Complete!*\n\n"
+            f"📱 *Phone:* `{phone}`\n"
+            f"💰 *Amount:* ₱{amount}\n"
+            f"🆔 *Order:* `{order_no}`\n"
+            f"⏰ *Time:* {ph_time} (PH Time)\n\n"
+            f"Click the button below to open payment page.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
 
 # ════════════════════════════════════════════════
@@ -370,6 +523,7 @@ async def main():
     print("╚══════════════════════════════════════════════╝")
     print(f"\n[INFO] Proxies loaded: {len(PROXIES)}")
     print(f"[INFO] Recharge: ₱{RECHARGE_AMOUNT} via {RECHARGE_TYPE}")
+    print(f"[INFO] PH Time: {get_ph_time()}")
     print("[INFO] Bot is running...\n")
     
     # Build application
@@ -377,10 +531,10 @@ async def main():
     
     # Add handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reg", button_callback))
+    app.add_handler(CommandHandler("reg", reg_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Start bot with polling
+    # Start bot
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
