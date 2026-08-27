@@ -7,8 +7,6 @@ import sys
 import re
 import os
 import base64
-from io import BytesIO
-from PIL import Image
 from fake_useragent import UserAgent
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -38,18 +36,16 @@ APP_MARKETS = [
 
 SOURCES = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
 
-# Parse proxies from environment variable
+# Parse proxies from environment
 PROXY_LIST = os.getenv("PROXIES", "").strip()
 PROXIES = []
 
 if PROXY_LIST:
-    # Format: user:pass@host:port,user:pass@host:port
     for proxy_str in PROXY_LIST.split(','):
         proxy_str = proxy_str.strip()
         if not proxy_str:
             continue
         try:
-            # Parse user:pass@host:port
             auth_host = proxy_str.split('@')
             auth = auth_host[0].split(':')
             host_port = auth_host[1].split(':')
@@ -63,14 +59,12 @@ if PROXY_LIST:
         except:
             pass
 else:
-    # Default proxies if no env variable
     PROXIES = [
         {"username": "ad65f9b0393c2aed4638__cr.ph", "password": "53c82f6ebffdc49e", "host": "gw.dataimpulse.com", "port": 823, "country": "ph"},
         {"username": "663ea6c747410f559675__cr.ph", "password": "faf33389a7a6aad9", "host": "gw.dataimpulse.com", "port": 823, "country": "ph"},
         {"username": "78ccfb89bf6dfa458094__cr.ph", "password": "1eda185143fae5d1", "host": "gw.dataimpulse.com", "port": 823, "country": "ph"},
     ]
 
-# Track proxy usage
 proxy_counter = 0
 ua = UserAgent()
 
@@ -82,7 +76,6 @@ def generate_ph_mobile():
     return random.choice(prefixes) + str(random.randint(1000000, 9999999))
 
 def get_next_proxy():
-    """Get next proxy in round-robin fashion"""
     global proxy_counter
     if not PROXIES:
         return None
@@ -248,7 +241,7 @@ async def get_qr_from_sspay(qr_url, proxy_cfg):
                         if qr_data.startswith('data:image/png;base64,'):
                             return qr_data.replace('data:image/png;base64,', '')
                     
-                    # Fallback: QR server
+                    # Use QR server as fallback
                     qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_url}"
                     async with session.get(qr_api_url, proxy=proxy_url, timeout=30) as qr_resp:
                         if qr_resp.status == 200:
@@ -287,7 +280,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔄 Processing registration...\nPlease wait...")
         
         proxy = get_next_proxy()
-        proxy_info = f"{proxy['host']}:{proxy['port']}" if proxy else "No proxy"
         
         reg_result = await register_tarsiers(proxy)
         
