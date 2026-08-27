@@ -16,7 +16,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8874356199:AAGvs9dZJB-trVJLmDOWZIN
 
 TARSIERS_API = "https://api.tarsiers.bet"
 TARSIERS_WEB = "https://www.tarsiers.bet"
-SSPAY_URL = "https://www.sspay01.com"
 PASSWORD = "qwe123"
 TYPE = "phone"
 AREA_CODE = "63"
@@ -364,7 +363,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════
-async def main():
+def main():
     print("╔══════════════════════════════════════════════╗")
     print("║  TARSIERS TELEGRAM REG BOT                  ║")
     print("║  Deployed on Render                         ║")
@@ -373,23 +372,20 @@ async def main():
     print(f"[INFO] Recharge: ₱{RECHARGE_AMOUNT} via {RECHARGE_TYPE}")
     print("[INFO] Bot is running...\n")
     
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Build application
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("reg", button_callback))
-    application.add_handler(CallbackQueryHandler(button_callback))
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reg", button_callback))
+    app.add_handler(CallbackQueryHandler(button_callback))
     
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    
-    # Keep running
-    while True:
-        await asyncio.sleep(3600)
+    # Start bot (non-async version)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         print("\n[!] Stopped")
     except Exception as e:
